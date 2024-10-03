@@ -1,3 +1,0 @@
-/home/wangjunhao/第二次任务喵/task/build/CMakeFiles/task.dir
-/home/wangjunhao/第二次任务喵/task/build/CMakeFiles/edit_cache.dir
-/home/wangjunhao/第二次任务喵/task/build/CMakeFiles/rebuild_cache.dir
