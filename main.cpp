@@ -229,16 +229,19 @@ int main() {
     bool rFound = false, hammerFound = false;
     double hh_tim=static_cast<double>(t.count()) / 1000;;
 
-     A_est = 1.8;
-     w_est = 100.884;
-     fai_est = 100.65;
-     A0_est = 3.305;
 
      double sum_T=0;
      double sta_tim,end_tim;
      int now=1;
      while(now <= 10)
      {
+
+                 A_est = 1.8;
+                w_est = 100.884;
+                fai_est = 100.65;
+                A0_est = 3.305;
+                timeData.clear();
+                angularVelocityData.clear();
             sta_tim=static_cast<double>(t.count()) / 1000;
                     while (true) {
                         t = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
