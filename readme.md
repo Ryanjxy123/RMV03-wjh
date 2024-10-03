@@ -2,8 +2,12 @@
 
 一共迭代了11个版本
 
+![image](https://github.com/user-attachments/assets/ac105271-6ce0-48ee-99a9-f5f1e5ee6f7a)
+
+
 开始的时候先对风车进行识别和检测，卡了一段时间后，通过外界矩形和边缘检测成功识别到了特殊锤子并且画了圆
 
+![3AB528CE96FE09CD24C5AD9F5368463A](https://github.com/user-attachments/assets/2ead6017-eb1d-4f6e-9492-4be8a05bcf95)
 
 后面就开始拟合
 
