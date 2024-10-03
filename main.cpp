@@ -172,11 +172,61 @@ vector<double> removeOutliers(const vector<double>& data) {
 }
 
 
+// 计算零交点的周期函数
+double calculatePeriodFromZeroCrossings(const std::vector<double>& timeData, const std::vector<double>& angularVelocityData) {
+    double lastCrossingTime = -std::numeric_limits<double>::infinity();
+    double periodSum = 0.0;
+    int crossingCount = 0;
+
+    for (size_t i = 1; i < timeData.size(); i++) {
+        // 检测零交点：角速度从正到负或从负到正
+        if ((angularVelocityData[i - 1] > 0 && angularVelocityData[i] <= 0) ||
+            (angularVelocityData[i - 1] < 0 && angularVelocityData[i] >= 0)) {
+            double t1 = timeData[i - 1];
+            double t2 = timeData[i];
+            double v1 = angularVelocityData[i - 1];
+            double v2 = angularVelocityData[i];
+
+            // 线性插值找出准确的零交点时间
+            double zeroCrossingTime = t1 - v1 * (t2 - t1) / (v2 - v1);
+
+            if (lastCrossingTime > -std::numeric_limits<double>::infinity()) {
+                double period = zeroCrossingTime - lastCrossingTime;
+                periodSum += period;
+                crossingCount++;
+            }
+
+            lastCrossingTime = zeroCrossingTime;
+        }
+    }
+
+    if (crossingCount > 0) {
+        return periodSum / crossingCount;  // 平均周期
+    } else {
+        return -1.0;  // 无法计算周期
+    }
+}
+
+double period;
+
+// 计算相位的函数
+double calculatePhase(const vector<double>& timeData, const vector<double>& angularVelocityData, double w) {
+    // 找到角速度的峰值点
+    auto maxElementIter = max_element(angularVelocityData.begin(), angularVelocityData.end());
+    int maxIndex = distance(angularVelocityData.begin(), maxElementIter);
+
+    // 对应的时间
+    double tMax = timeData[maxIndex];
+    cout<<"period="<<period<<"\n";
+    double pperiod = 2*3.1415926/w;
+    // 计算相位
+    double phase = pperiod-fmod((w*tMax),pperiod);
+    return phase;
+}
+
 void init()
 {
      A_est = A_rea-1;
-     w_est = w_rea;
-     fai_est = fai_rea;
      A0_est = A0_rea+1;
      return;
 }
@@ -236,7 +286,7 @@ int main() {
      while(now <= 10)
      {
 
-                 A_est = 1.8;
+                A_est = 1.8;
                 w_est = 100.884;
                 fai_est = 100.65;
                 A0_est = 3.305;
@@ -342,7 +392,10 @@ int main() {
                             // // // 数据平滑
                             auto smoothedAngularVelocityData = movingAverage(filteredAngularVelocityData, 5); // 3点移动平均
 
-
+                           // 计算周期
+                     period = -calculatePeriodFromZeroCrossings(timeData, smoothedAngularVelocityData);
+                            w_est=1.81/period;
+                            fai_est=(w_est-0.24);
                             // // 计算周期
                             // double period = -calculatePeriod(timeData, smoothedAngularVelocityData);
                             // cout<<period<<"\n";
@@ -361,7 +414,7 @@ int main() {
 
                             l_A=A_est;l_A0=A0_est;
 
-                            if (isConverged(abs(A_est), A_rea) && isConverged(w_est, w_rea) && isConverged(fai_est, fai_rea) && isConverged(A0_est, A0_rea)) {
+                            if (isConverged(abs(A_est), A_rea) && isConverged(abs(w_est), w_rea) && isConverged(abs(fai_est), fai_rea) && isConverged(abs(A0_est), A0_rea)) {
                                 // cout << "Converged!" << endl;
                                 // cout << "A=" << A_est << " w=" << w_est << " fai=" << fai_est << " A0=" << A0_est << "\n";
                                 break;
