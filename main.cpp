@@ -9,29 +9,26 @@
 #include <cmath>
 
 using namespace std;
-
 using namespace cv;
 
 // 固定初始值
-double A_est = 1.8;
-double w_est = 100.884; // 不更新
-double fai_est = 100.65;
-double A0_est = 3.305;
+double amplitude_guess = 1.8;
+double angular_freq_guess = 100.884; // 不更新
+double phase_shift_guess = 100.65;
+double offset_guess = 3.305;
 
-double A_rea = 0.785; // 振幅
-double w_rea = 1.884; // 角速度
-double fai_rea = 1.65; // 相位
-double A0_rea = 1.305; // 另一个参数
+double amplitude_real = 0.785; // 振幅
+double angular_freq_real = 1.884; // 角速度
+double phase_shift_real = 1.65; // 相位
+double offset_real = 1.305; // 另一个参数
 
 // 用于存储时间、风车位置和旋转角速度的向量
-vector<double> timeData;
-vector<double> positionData;
-vector<double> angularVelocityData;
+vector<double> timestamps;
+vector<double> positions;
+vector<double> velocities;
 
-
-
-struct SinusoidalCostFunctor {
-    SinusoidalCostFunctor(double t, double v) : t(t), v(v) {}
+struct CosineModelFunctor {
+    CosineModelFunctor(double timestamp, double velocity) : t(timestamp), v(velocity) {}
 
     template <typename T>
     bool operator()(const T* const params, T* residual) const {
@@ -44,107 +41,106 @@ struct SinusoidalCostFunctor {
     const double v;
 };
 
-// 移动平均函数
-vector<double> movingAverage(const vector<double>& data, int windowSize) {
-    vector<double> averagedData;
+// 平滑数据的移动平均函数
+vector<double> smoothData(const vector<double>& data, int window_size) {
+    vector<double> smoothed_data;
     for (size_t i = 0; i < data.size(); ++i) {
         double sum = 0.0;
         int count = 0;
-        for (int j = -windowSize; j <= windowSize; ++j) {
+        for (int j = -window_size; j <= window_size; ++j) {
             if (i + j >= 0 && i + j < data.size()) {
                 sum += data[i + j];
                 count++;
             }
         }
-        averagedData.push_back(sum / count);
+        smoothed_data.push_back(sum / count);
     }
-    return averagedData;
+    return smoothed_data;
 }
 
-
-
-
-struct CosineFunctor {
-    static const int InputsAtCompileTime = 4; // 输入参数数量
-    static const int ValuesAtCompileTime = Eigen::Dynamic; // 输出参数数量
+struct SinWaveFitFunctor {
+    static const int InputsAtCompileTime = 4; 
+    static const int ValuesAtCompileTime = Eigen::Dynamic; 
 
     using Scalar = double;
     using InputType = Eigen::VectorXd;
     using ValueType = Eigen::VectorXd;
     using JacobianType = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
 
-    const vector<double>& t;
-    const vector<double>& y;
+    const vector<double>& times;
+    const vector<double>& y_values;  // 重命名为 y_values
 
-    CosineFunctor(const vector<double>& t, const vector<double>& y) : t(t), y(y) {}
+    SinWaveFitFunctor(const vector<double>& times, const vector<double>& values) : times(times), y_values(values) {}
 
     int operator()(const InputType& params, ValueType& residuals) const {
-        residuals.resize(t.size());
-        for (size_t i = 0; i < t.size(); ++i) {
+        residuals.resize(times.size());
+        for (size_t i = 0; i < times.size(); ++i) {
             double A = params[0];
             double w = params[1];
-            double fai = params[2];
+            double phi = params[2];
             double A0 = params[3];
-            residuals[i] = y[i] - (A * cos(w * t[i] + fai) + A0);
+            residuals[i] = y_values[i] - (A * cos(w * times[i] + phi) + A0);
         }
         return 0;
     }
 
     int df(const InputType& params, JacobianType& jacobian) const {
-        jacobian.resize(t.size(), 4); // 4 个输入参数
-        for (size_t i = 0; i < t.size(); ++i) {
+        jacobian.resize(times.size(), 4); 
+        for (size_t i = 0; i < times.size(); ++i) {
             double w = params[1];
             double A = params[0];
-            double fai = params[2];
-            double t_val = t[i];
+            double phi = params[2];
+            double t = times[i];
 
-            jacobian(i, 0) = -cos(w * t_val + fai); // 对 A 的偏导数
-            jacobian(i, 1) = A * t_val * sin(w * t_val + fai); // 对 w 的偏导数
-            jacobian(i, 2) = A * sin(w * t_val + fai); // 对 fai 的偏导数
-            jacobian(i, 3) = 1; // 对 A0 的偏导数
+            jacobian(i, 0) = -cos(w * t + phi); 
+            jacobian(i, 1) = A * t * sin(w * t + phi); 
+            jacobian(i, 2) = A * sin(w * t + phi); 
+            jacobian(i, 3) = 1; 
         }
         return 0;
     }
 
     int values() const {
-        return t.size();
+        return times.size();
     }
 };
 
-// 收敛判断
-bool isConverged(double estimated, double trueValue) {
-    return std::abs(estimated - trueValue) <= 0.05 * std::abs(trueValue);
+
+// 检查估计值与真实值是否收敛
+bool checkConvergence(double estimated, double true_value) {
+    return std::abs(estimated - true_value) <= 0.05 * std::abs(true_value);
 }
 
 int main(int argc, char** argv)
 {
-    double sum_T = 0;
-    int now=1;
+    double total_time = 0;
+    int experiment_count = 1;
 
-    while(now <= 10) {
-        vector<double> t_data;
-        vector<double> v_data;
+    while (experiment_count <= 10) {
+        vector<double> time_series;
+        vector<double> speed_series;
 
-        std::chrono::milliseconds t = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-        double t_start = (double)t.count();
-        WINDMILL::WindMill wm(t.count());
-        cv::Mat src;
-        Point previous_center(-1, -1);
-        double previous_time = 0;
+        std::chrono::milliseconds timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+        double start_time = (double)timestamp.count();
+        WINDMILL::WindMill wm(timestamp.count());
+        cv::Mat frame;
+        Point last_center(-1, -1);
+        double last_time = 0;
         Point current_center;
-        double eve_t=0;
-        while (t_data.size() < 100) {
-            t = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-            src = wm.getMat((double)t.count()/1000);
+        double single_experiment_time = 0;
+        
+        while (time_series.size() < 100) {
+            timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+            frame = wm.getMat((double)timestamp.count()/1000);
 
-            // 图像处理
-            Mat gray, blur, edges;
-            cvtColor(src, gray, COLOR_BGR2GRAY);
-            GaussianBlur(gray, blur, Size(3,3), 0); 
-            Canny(gray, edges, 50, 150);
-            imshow(" ", edges);
+            // 图像处理步骤
+            Mat gray_frame, blurred_frame, edge_frame;
+            cvtColor(frame, gray_frame, COLOR_BGR2GRAY);
+            GaussianBlur(gray_frame, blurred_frame, Size(3,3), 0); 
+            Canny(blurred_frame, edge_frame, 50, 150);
+            imshow("Edge Detection", edge_frame);
             vector<vector<Point>> contours;
-            findContours(edges, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+            findContours(edge_frame, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
             for (const auto& contour : contours) {
                 vector<Point> approx;
@@ -152,68 +148,67 @@ int main(int argc, char** argv)
                 approxPolyDP(contour, approx, epsilon, true);
 
                 if (approx.size() == 7) {
-                    Rect rect = boundingRect(approx);
-                    current_center = Point(rect.x + rect.width / 2, rect.y + rect.height / 2);
-                    circle(src, current_center, 20, Scalar(0, 255, 0), 2);
+                    Rect bounding_rect = boundingRect(approx);
+                    current_center = Point(bounding_rect.x + bounding_rect.width / 2, bounding_rect.y + bounding_rect.height / 2);
+                    circle(frame, current_center, 20, Scalar(0, 255, 0), 2);
 
                     double current_time = static_cast<double>(getTickCount()) / getTickFrequency();
-                    if (previous_center.x != -1) {
-                        double delta_time = current_time - previous_time;
-                        if (delta_time > 0) {
-                            double distance = norm(current_center - previous_center);
-                            double speed = distance / delta_time;
-                            t_data.push_back(current_time);
-                            v_data.push_back(speed);
+                    if (last_center.x != -1) {
+                        double time_diff = current_time - last_time;
+                        if (time_diff > 0) {
+                            double displacement = norm(current_center - last_center);
+                            double velocity = displacement / time_diff;
+                            time_series.push_back(current_time);
+                            speed_series.push_back(velocity);
                         }
                     }
-                    previous_center = current_center;
-                    previous_time = current_time;
+                    last_center = current_center;
+                    last_time = current_time;
                 }
             }
-            imshow("Windmill", src);
-            // Ceres问题设置
-            ceres::Problem problem;
-            double params[4] = { A_est, w_est, fai_est, A0_est };
-            for (size_t i = 0; i < t_data.size(); ++i) {
-                problem.AddResidualBlock(
-                    new ceres::AutoDiffCostFunction<SinusoidalCostFunctor, 1, 4>(
-                        new SinusoidalCostFunctor(t_data[i], v_data[i])),
-                    nullptr, params);
+            imshow("Windmill Detection", frame);
+
+            // 使用 Ceres 进行问题求解
+            ceres::Problem optimization_problem;
+            double param_estimates[4] = { amplitude_guess, angular_freq_guess, phase_shift_guess, offset_guess };
+            for (size_t i = 0; i < time_series.size(); ++i) {
+                optimization_problem.AddResidualBlock(
+                    new ceres::AutoDiffCostFunction<CosineModelFunctor, 1, 4>(
+                        new CosineModelFunctor(time_series[i], speed_series[i])),
+                    nullptr, param_estimates);
             }
 
-            ceres::Solver::Options options;
-            options.linear_solver_type = ceres::DENSE_QR;
-            options.minimizer_progress_to_stdout = false;
+            ceres::Solver::Options solver_options;
+            solver_options.linear_solver_type = ceres::DENSE_QR;
+            solver_options.minimizer_progress_to_stdout = false;
 
-            ceres::Solver::Summary summary;  // 声明 summary 变量
-            double tolerance = 0.05; // 5% 收敛阈值
-            bool converged = false;
-            auto start_time = std::chrono::high_resolution_clock::now();
-            int max_iterations = 130; // 最大迭代次数
-            int iteration = 0;
+            ceres::Solver::Summary solver_summary;
+            double convergence_tolerance = 0.05; 
+            bool has_converged = false;
+            auto fitting_start_time = std::chrono::high_resolution_clock::now();
+            int max_iterations = 130; 
+            int current_iteration = 0;
 
-            while (!converged && iteration < max_iterations) {
-                ceres::Solve(options, &problem, &summary);  // 现在 summary 已声明
-                iteration++;
+            while (!has_converged && current_iteration < max_iterations) {
+                ceres::Solve(solver_options, &optimization_problem, &solver_summary);
+                current_iteration++;
 
-           
                 // 检查收敛条件
-               
-                            if (isConverged(abs(A_est), A_rea) && isConverged(abs(w_est), w_rea) && isConverged(abs(fai_est), fai_rea) && isConverged(abs(A0_est), A0_rea)) {
-                    converged = true;
+                if (checkConvergence(abs(amplitude_guess), amplitude_real) && checkConvergence(abs(angular_freq_guess), angular_freq_real) && checkConvergence(abs(phase_shift_guess), phase_shift_real) && checkConvergence(abs(offset_guess), offset_real)) {
+                    has_converged = true;
                 }
             }
 
             // 记录拟合结束时间
-            auto end_time = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<double> duration = end_time - start_time;
-            sum_T += duration.count();
-            eve_t+=duration.count();
+            auto fitting_end_time = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> fitting_duration = fitting_end_time - fitting_start_time;
+            total_time += fitting_duration.count();
+            single_experiment_time += fitting_duration.count();
         }
-        now++;
-        cout<<eve_t<<" ";
+        experiment_count++;
+        cout << single_experiment_time << " ";
     }
-    cout<<"\n";
-    cout << sum_T / 10 ;
+    cout << "\n";
+    cout << total_time / 10;
     return 0;
 }
